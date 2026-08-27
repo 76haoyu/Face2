@@ -56,10 +56,10 @@ jobs:
             https://github.com/opencv/opencv_zoo/raw/refs/heads/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
           [ $(stat -c%s "$MODEL_DIR/yunet.onnx") -gt 10000 ] || { echo "ERROR: yunet.onnx 下载失败或太小"; exit 1; }
 
-          echo "==> 下载 inswapper_128 (fp16)"
-          curl -fL --retry 3 --max-time 300 -o "$MODEL_DIR/inswapper_128_fp16.onnx" \
-            https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/inswapper_128_fp16.onnx
-          [ $(stat -c%s "$MODEL_DIR/inswapper_128_fp16.onnx") -gt 1000000 ] || { echo "ERROR: inswapper_128_fp16.onnx 下载失败或太小"; exit 1; }
+          echo "==> 下载 inswapper_128 (fp32，手机 CPU 可跑)"
+          curl -fL --retry 3 --max-time 300 -o "$MODEL_DIR/inswapper_128.onnx" \
+            https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/inswapper_128.onnx
+          [ $(stat -c%s "$MODEL_DIR/inswapper_128.onnx") -gt 1000000 ] || { echo "ERROR: inswapper_128.onnx 下载失败或太小"; exit 1; }
 
           echo "==> 下载 ArcFace (buffalo_l)"
           curl -fL --retry 3 --max-time 300 -o /tmp/buffalo_l.zip \
