@@ -29,9 +29,7 @@ android {
     }
 
     defaultConfig {
-        // TODO: 改成你自己的应用 ID
         applicationId "com.example.faceswap"
-        // ONNX Runtime Mobile 需要 minSdk 21；这里用 24 兼顾性能
         minSdkVersion 24
         targetSdkVersion flutter.targetSdkVersion
         versionCode flutterVersionCode.toInteger()
@@ -40,22 +38,19 @@ android {
 
     buildTypes {
         release {
-            // 调试签名即可本地安装；正式发布请配置自己的签名
             signingConfig signingConfigs.debug
             minifyEnabled false
             shrinkResources false
         }
     }
 
-    // ONNX 模型以 .onnx 存放于 assets，禁止压缩以便原生直接读取
     aaptOptions {
         noCompress "onnx"
     }
 }
 
 dependencies {
-    // 端侧换脸推理框架（ONNX Runtime Mobile，与 Roop/ReActor 同款模型链路）
-    implementation "com.microsoft.onnxruntime:onnxruntime-mobile:1.18.0"
+    implementation "com.microsoft.onnxruntime:onnxruntime-android:1.18.0"
 }
 
 flutter {
