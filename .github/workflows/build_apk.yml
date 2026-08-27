@@ -1,0 +1,54 @@
+yaml
+name: Build Real FaceSwap APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+      - name: 安装 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: 安装 Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: stable
+          cache: true
+      - name: 安装 Android SDK
+        uses: android-actions/setup-android@v3
+      - name: 下载 Android 平台与构建工具
+        run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+      - name: 生成安卓平台工程
+        run: flutter create --platforms=android .
+      - name: 覆盖原生换脸模块与配置
+        run: cp -r android_overlay/app/* android/app/
+      - name: 下载真实换脸模型
+        run: |
+          mkdir -p android/app/src/main/assets/models
+          curl -L -o android/app/src/main/assets/models/yunet.onnx https://github.com/opencv/opencv_zoo/raw/refs/heads/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
+          curl -L -o android/app/src/main/assets/models/inswapper_128_fp16.onnx https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/inswapper_128_fp16.onnx
+          curl -L -o /tmp/buffalo_l.zip https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip
+          unzip -o /tmp/buffalo_l.zip -d /tmp/buffalo
+          cp /tmp/buffalo/buffalo_l/w600k_r50.onnx android/app/src/main/assets/models/
+      - name: 调整 Gradle 内存
+        run: echo "org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m" >> android/gradle.properties
+      - name: 编译真实换脸 APK
+        run: |
+          flutter pub get
+          flutter build apk --release --dart-define=USE_REAL_ENGINE=true
+      - name: 上传 APK 安装包
+        uses: actions/upload-artifact@v4
+        with:
+          name: faceswap-release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
