@@ -13,25 +13,16 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 
-/**
- * 真实端侧换脸原生模块（Android + ONNX Runtime Mobile）。
- *
- * 由 MethodChannel(com.example.faceswap/ml) 与 Dart 侧 MlFaceIdentityService / MlFaceSwapService 通信。
- * 真实推理在 [FaceSwapEngine] 中实现（SCRFD 检测 / ArcFace 识别 / inswapper_128 换脸）。
- *
- * 模型文件需在构建期放入 app/src/main/assets/models/（见 .github/workflows/build_apk.yml）。
- * 若模型缺失或推理抛错，方法会回传清晰错误信息而非崩溃，Dart 侧显示为提示。
- */
 class MlFaceSwapPlugin private constructor(private val context: Context) : MethodCallHandler {
 
     companion object {
         private const val CHANNEL = "com.example.faceswap/ml"
         private const val TAG = "MlFaceSwapPlugin"
 
-        fun registerWith(engine: FlutterEngine) {
+        fun registerWith(engine: FlutterEngine, context: Context) {
             val messenger = engine.dartExecutor.binaryMessenger
             MethodChannel(messenger, CHANNEL).setMethodCallHandler(
-                MlFaceSwapPlugin(engine.applicationContext)
+                MlFaceSwapPlugin(context)
             )
         }
     }
@@ -85,7 +76,6 @@ class MlFaceSwapPlugin private constructor(private val context: Context) : Metho
                 }
 
                 "swapVideo" -> {
-                    // 视频逐帧换脸需 ffmpeg/ MediaCodec 处理，原生已预留接口。
                     result.error("NOT_SUPPORTED",
                         "本版本图片换脸已为真实效果；视频逐帧换脸为进阶功能，请见文档。", null)
                 }
