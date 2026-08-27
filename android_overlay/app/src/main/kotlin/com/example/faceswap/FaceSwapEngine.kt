@@ -17,7 +17,7 @@ import java.nio.ByteOrder
 import kotlin.math.sqrt
 
 /**
- * 真实端侧换脸引擎（基于 ONNX Runtime Mobile）。
+ * 真实端侧换脸引擎（基于 ONNX Runtime Android）。
  *
  * 模型链路与桌面端 Roop / ReActor 完全一致：
  *   - 检测：YuNet（face_detection_yunet_2023mar.onnx），输出 [x,y,w,h,score,5点landmark]
@@ -26,9 +26,6 @@ import kotlin.math.sqrt
  *
  * 20 张照各取最大脸 → ArcFace 编码 → 平均并 L2 归一化 = 身份向量。
  * 换脸时为目标图每张脸对齐到 128x128 → inswapper → 反变换贴回原图（羽化）。
- *
- * 注意：归一化常数需与训练一致（见各 preprocess 的 mean/std）。本实现取常用值，
- * 若效果偏差，优先核对这几个常数与 landmark 参考点。
  */
 class FaceSwapEngine(private val context: Context) {
 
@@ -39,6 +36,7 @@ class FaceSwapEngine(private val context: Context) {
     private var detSession: OrtSession? = null
     private var recSession: OrtSession? = null
     private var swapSession: OrtSession? = null
+    private var assetsCopied = false
 
     data class Face(val rect: RectF, val landmarks: FloatArray /* 10个值: x0,y0,...,x4,y4 */)
 
@@ -52,8 +50,32 @@ class FaceSwapEngine(private val context: Context) {
     )
 
     fun modelFilesReady(): Boolean {
+        copyAssetsModelsIfNeeded()
         return listOf("yunet.onnx", "w600k_r50.onnx", "inswapper_128_fp16.onnx")
             .all { File(modelsDir, it).exists() && File(modelsDir, it).length() > 0 }
+    }
+
+    /** 首次运行时把 APK assets/models/ 下的 .onnx 复制到应用私有目录，供 ONNX Runtime 读取。 */
+    private fun copyAssetsModelsIfNeeded() {
+        if (assetsCopied) return
+        assetsCopied = true
+        val assetManager = context.assets
+        try {
+            val models = assetManager.list("models") ?: return
+            for (m in models) {
+                if (!m.endsWith(".onnx")) continue
+                val outFile = File(modelsDir, m)
+                if (outFile.exists() && outFile.length() > 0) continue
+                Log.i(tag, "Copying asset model: $m")
+                assetManager.open("models/$m").use { input ->
+                    outFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to copy assets models", e)
+        }
     }
 
     @Synchronized
@@ -101,17 +123,15 @@ class FaceSwapEngine(private val context: Context) {
         if (faces.isEmpty()) return null
 
         val base = target.copy(Bitmap.Config.ARGB_8888, true)
-        val canvas = Canvas(base)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 
         for (face in faces) {
             val aligned = align(target, face.landmarks, 128f) ?: continue
             val swapped = runInswapper(aligned, embedding) ?: continue
             // 反变换贴回原图
-            val back = alignBack(swapped, face.landmarks, target.width.toFloat(), target.height.toFloat())
+            val back = alignBack(swapped, face.landmarks, target.width, target.height)
             // 羽化遮罩合成
             val mask = buildFeatherMask(back.width, back.height, face.rect)
-            composite(canvas, back, mask)
+            composite(base, back, mask)
         }
         val out = File(modelsDir, "swap_${System.currentTimeMillis()}.png")
         base.compress(Bitmap.CompressFormat.PNG, 100, out.outputStream())
@@ -162,7 +182,7 @@ class FaceSwapEngine(private val context: Context) {
         val tensor = floatTensor(input, shape)
         val inName = detSession!!.inputNames.iterator().next()
         val res = detSession!!.run(mapOf(inName to tensor))
-        val arr = res.values.iterator().next().value as Array<*>
+        val arr = res.get(0).value as Array<*>
         // YuNet 输出常见为 [1, N, 15]；个别导出为 [1, 1, N, 15]，做一次兼容
         val level1 = arr[0]
         val rows: Array<*> = if (level1 is Array<*> && level1.firstOrNull() is FloatArray) {
@@ -204,7 +224,7 @@ class FaceSwapEngine(private val context: Context) {
         val tensor = floatTensor(input, shape)
         val inName = recSession!!.inputNames.iterator().next()
         val res = recSession!!.run(mapOf(inName to tensor))
-        val v = res.values.iterator().next().value
+        val v = res.get(0).value
         val emb = if (v is Array<*> && v[0] is FloatArray) {
             (v[0] as FloatArray).clone()
         } else null
@@ -223,7 +243,7 @@ class FaceSwapEngine(private val context: Context) {
         val names = swapSession!!.inputNames.toList()
         val inputs = mapOf(names[0] to tTensor, names[1] to sTensor)
         val res = swapSession!!.run(inputs)
-        val v = res.values.iterator().next().value
+        val v = res.get(0).value
         // 输出 [1,3,128,128]
         val out = v as Array<*>
         val chR = out[0] as Array<*>
@@ -345,12 +365,12 @@ class FaceSwapEngine(private val context: Context) {
         return mask
     }
 
-    private fun composite(canvas: Canvas, layer: Bitmap, mask: Bitmap) {
-        // 以 mask 为 alpha 把 layer 贴到 canvas（简单 OVAL 羽化：用 mask 的 alpha 混合）
+    private fun composite(base: Bitmap, layer: Bitmap, mask: Bitmap) {
+        // 以 mask 为 alpha 把 layer 贴到 base（简单 OVAL 羽化：用 mask 的 alpha 混合）
         val w = layer.width; val h = layer.height
         val lp = IntArray(w * h); layer.getPixels(lp, 0, w, 0, 0, w, h)
         val mp = IntArray(w * h); mask.getPixels(mp, 0, w, 0, 0, w, h)
-        val cp = IntArray(w * h); canvas.getBitmap().getPixels(cp, 0, w, 0, 0, w, h)
+        val cp = IntArray(w * h); base.getPixels(cp, 0, w, 0, 0, w, h)
         for (i in lp.indices) {
             val al = Color.alpha(mp[i])
             if (al == 0) continue
@@ -361,7 +381,7 @@ class FaceSwapEngine(private val context: Context) {
             val bl = (Color.blue(lp[i]) * fa + Color.blue(cp[i]) * fb).toInt()
             cp[i] = Color.argb(255, r, g, bl)
         }
-        canvas.getBitmap().setPixels(cp, 0, w, 0, 0, w, h)
+        base.setPixels(cp, 0, w, 0, 0, w, h)
     }
 
     // ---------------- 工具 ----------------
