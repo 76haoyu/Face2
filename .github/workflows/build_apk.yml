@@ -47,20 +47,30 @@ jobs:
 
       - name: 下载真实换脸模型（检测 / 识别 / 换脸）
         run: |
-          mkdir -p android/app/src/main/assets/models
+          set -e
+          MODEL_DIR=android/app/src/main/assets/models
+          mkdir -p "$MODEL_DIR"
+
           echo "==> 下载 YuNet 检测器"
-          curl -L -o android/app/src/main/assets/models/yunet.onnx \
+          curl -fL --retry 3 --max-time 60 -o "$MODEL_DIR/yunet.onnx" \
             https://github.com/opencv/opencv_zoo/raw/refs/heads/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
+          [ $(stat -c%s "$MODEL_DIR/yunet.onnx") -gt 10000 ] || { echo "ERROR: yunet.onnx 下载失败或太小"; exit 1; }
+
           echo "==> 下载 inswapper_128 (fp16)"
-          curl -L -o android/app/src/main/assets/models/inswapper_128_fp16.onnx \
+          curl -fL --retry 3 --max-time 300 -o "$MODEL_DIR/inswapper_128_fp16.onnx" \
             https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/inswapper_128_fp16.onnx
+          [ $(stat -c%s "$MODEL_DIR/inswapper_128_fp16.onnx") -gt 1000000 ] || { echo "ERROR: inswapper_128_fp16.onnx 下载失败或太小"; exit 1; }
+
           echo "==> 下载 ArcFace (buffalo_l)"
-          curl -L -o /tmp/buffalo_l.zip \
+          curl -fL --retry 3 --max-time 300 -o /tmp/buffalo_l.zip \
             https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip
+          [ $(stat -c%s /tmp/buffalo_l.zip) -gt 1000000 ] || { echo "ERROR: buffalo_l.zip 下载失败或太小"; exit 1; }
           unzip -o /tmp/buffalo_l.zip -d /tmp/buffalo
-          cp /tmp/buffalo/buffalo_l/w600k_r50.onnx android/app/src/main/assets/models/
+          find /tmp/buffalo -name "w600k_r50.onnx" -print
+          cp "$(find /tmp/buffalo -name 'w600k_r50.onnx' | head -n1)" "$MODEL_DIR/"
+
           echo "==> 模型清单"
-          ls -lh android/app/src/main/assets/models/
+          ls -lh "$MODEL_DIR/"
 
       - name: 调整 Gradle 内存（模型较大，避免 OOM）
         run: echo "org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m" >> android/gradle.properties
